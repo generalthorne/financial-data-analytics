@@ -88,3 +88,97 @@ def save_economic_data(data: pd.Series) -> None:
         connection.execute(query, records)
 
     engine.dispose()
+
+
+
+def load_stock_data(
+    ticker: str,
+    start_date: str,
+    end_date: str
+) -> pd.DataFrame:
+    """Load historical stock prices from the PostgreSQL database."""
+
+    engine = get_database_engine()
+
+    query = text("""
+        SELECT date, ticker, open, high, low, close, volume
+        FROM stock_prices
+        WHERE ticker = :ticker
+        AND date >= :start_date
+        AND date < :end_date
+        ORDER BY date;
+    """)
+
+    try:
+        with engine.connect() as connection:
+            data = pd.read_sql(
+                query,
+                connection,
+                params={
+                    "ticker": ticker.upper(),
+                    "start_date": start_date,
+                    "end_date": end_date
+                }
+            )
+    finally:
+        engine.dispose()
+
+    if data.empty:
+        raise ValueError(f"No stored stock data found for {ticker}.")
+
+    data["date"] = pd.to_datetime(data["date"])
+    data = data.set_index("date")
+
+    data = data.rename(columns={
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume"
+    })
+
+    return data
+
+def load_economic_data(
+    series_id: str,
+    start_date: str,
+    end_date: str
+) -> pd.Series:
+    """Load an economic time series from the PostgreSQL database."""
+
+    engine = get_database_engine()
+
+    query = text("""
+        SELECT date, value
+        FROM economic_data
+        WHERE series_id = :series_id
+        AND date >= :start_date
+        AND date < :end_date
+        ORDER BY date;
+    """)
+
+    try:
+        with engine.connect() as connection:
+            data = pd.read_sql(
+                query,
+                connection,
+                params={
+                    "series_id": series_id,
+                    "start_date": start_date,
+                    "end_date": end_date
+                }
+            )
+    finally:
+        engine.dispose()
+
+    if data.empty:
+        raise ValueError(
+            f"No stored economic data found for {series_id}."
+        )
+
+    data["date"] = pd.to_datetime(data["date"])
+
+    result = data.set_index("date")["value"]
+    result.name = series_id
+
+    return result
