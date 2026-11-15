@@ -8,6 +8,8 @@ from financial_data.database.connection import (
 from financial_data.pipeline import update_stock_data
 
 
+
+
 def test_stock_data_pipeline():
     initialize_database()
 
