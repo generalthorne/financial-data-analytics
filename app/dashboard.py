@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from financial_data.market_calendar import get_market_rangebreaks 
 
 from financial_data.pipeline import (
     analyze_stock,
@@ -15,6 +16,10 @@ from financial_data.pipeline import (
 from financial_data.database.operations import (
     load_economic_data,
     load_stock_data
+)
+
+from financial_data.ingestion.stock_data import (
+    get_intraday_stock_data
 )
 
 ECONOMIC_INDICATORS = {
@@ -41,6 +46,14 @@ ECONOMIC_INDICATORS = {
         "Retail Sales": "RSAFS"
     }
 }
+
+
+# Shared Plotly configuration for all charts.
+PLOTLY_CONFIG = {
+    "scrollZoom": True,
+    "displaylogo": False
+}
+
 
 st.set_page_config(
     page_title="Financial Data Analytics",
@@ -92,28 +105,90 @@ if page == "Stock Analysis":
             value=pd.Timestamp.today()
         )
 
-    if st.button("Download Data and Analyze"):
+    candle_interval = st.selectbox(
+        "Candlestick Interval",
+        options=[
+            "5 Minutes",
+            "15 Minutes",
+            "30 Minutes",
+            "1 Hour",
+            "1 Day"
+        ],
+        index=4
+    )
 
+    interval_value = {
+        "5 Minutes": "5m",
+        "15 Minutes": "15m",
+        "30 Minutes": "30m",
+        "1 Hour": "1h",
+        "1 Day": "1d"
+    }[candle_interval]
+
+    if interval_value != "1d":
+        st.info(
+            "Intraday data (5-minute to 1-hour candles) is "
+            "available for the most recent 60 days only. "
+            "Please select a date range of 60 days or less."
+        )
+
+    if st.button("Download Data and Analyze"):
         try:
-            with st.spinner("Downloading and storing stock data..."):
+
+            if not ticker:
+                raise ValueError("Please enter a stock ticker.")
+            
+            if start_date >= end_date:
+                raise ValueError(
+                    "Start date must be before end date."
+                )
+
+            if (
+                interval_value != "1d"
+                and (end_date - start_date).days > 60
+            ):
+                raise ValueError(
+                    "Intraday data is limited to recent history. "
+                    "Please select a date range of 60 days or less."
+                )
+
+            # Make the selected end date inclusive.
+            end_date_exclusive = (
+                pd.Timestamp(end_date) + pd.Timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+
+            with st.spinner("Downloading and storing daily stock data..."):
                 update_stock_data(
                     ticker,
                     str(start_date),
-                    str(end_date)
+                    end_date_exclusive
                 )
 
             with st.spinner("Calculating financial metrics..."):
                 results = analyze_stock(
                     ticker,
                     str(start_date),
-                    str(end_date)
+                    end_date_exclusive
                 )
 
-                stock_data = load_stock_data(
-                    ticker.upper(),
-                    str(start_date),
-                    str(end_date)
-                )
+                if interval_value == "1d":
+
+                    stock_data = load_stock_data(
+                        ticker,
+                        str(start_date),
+                        end_date_exclusive
+                    )
+
+                else:
+
+                    stock_data = get_intraday_stock_data(
+                        ticker,
+                        str(start_date),
+                        end_date_exclusive,
+                        interval=interval_value
+                    )
+                
+                
 
                 st.subheader("Price Candlestick Chart")
 
@@ -134,13 +209,38 @@ if page == "Stock Analysis":
                     title=f"{ticker.upper()} Price History",
                     xaxis_title="Date",
                     yaxis_title="Price",
-                    xaxis_rangeslider_visible=False
+                    xaxis_rangeslider_visible=False,
+                    dragmode="pan"
+                )
+
+                
+
+                rangebreaks = get_market_rangebreaks(
+                    start_date,
+                    end_date,
+                    interval=interval_value
+                )
+
+                if interval_value != "1d":
+                    rangebreaks.append(
+                        dict(
+                            bounds=[16, 9.5],
+                            pattern="hour"
+                        )
+                    )
+
+                candlestick.update_xaxes(
+                    rangebreaks=rangebreaks,
+                    rangeslider_visible=False
                 )
 
                 st.plotly_chart(
                     candlestick,
-                    use_container_width=True
+                    use_container_width=True,
+                    config=PLOTLY_CONFIG
                 )
+
+                
 
             st.subheader("Trading Volume")
 
@@ -155,9 +255,18 @@ if page == "Stock Analysis":
                 title=f"{ticker.upper()} Trading Volume"
             )
 
+            volume_chart.update_layout(
+                dragmode="pan"
+            )
+
+            volume_chart.update_xaxes(
+                rangebreaks=rangebreaks
+            )
+
             st.plotly_chart(
                 volume_chart,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
             st.subheader(f"{ticker} Analysis")
@@ -181,11 +290,49 @@ if page == "Stock Analysis":
 
             st.subheader("Cumulative Returns")
 
-            st.line_chart(results["cumulative_returns"])
+            cumulative_chart = px.line(
+                results["cumulative_returns"],
+                labels={
+                    "index": "Date",
+                    "value": "Cumulative Return"
+                },
+                title="Cumulative Returns"
+            )
+
+            cumulative_chart.update_layout(
+                dragmode="pan",
+                yaxis_tickformat=".1%",
+                showlegend=False
+            )
+
+            st.plotly_chart(
+                cumulative_chart,
+                use_container_width=True,
+                config=PLOTLY_CONFIG
+            )
 
             st.subheader("Daily Returns")
 
-            st.line_chart(results["daily_returns"])
+            daily_returns_chart = px.line(
+                results["daily_returns"],
+                labels={
+                    "index": "Date",
+                    "value": "Daily Return"
+                },
+                title="Daily Returns"
+            )
+
+            daily_returns_chart.update_layout(
+                dragmode="pan",
+                yaxis_tickformat=".2%",
+                showlegend=False
+            )
+
+            st.plotly_chart(
+                daily_returns_chart,
+                use_container_width=True,
+                config=PLOTLY_CONFIG
+            )
 
             st.subheader("30-Day Rolling Volatility")
 
@@ -203,18 +350,18 @@ if page == "Stock Analysis":
             )
 
             fig.update_layout(
-                yaxis_tickformat=".1%"
+                yaxis_tickformat=".1%",
+                dragmode="pan"
             )
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
         except Exception as error:
             st.error(f"Analysis failed: {error}")
-
-        
 
 
 elif page == "Portfolio Analysis":
@@ -351,11 +498,49 @@ elif page == "Portfolio Analysis":
                 (1 + results["portfolio_returns"]).cumprod() - 1
             )
 
-            st.line_chart(cumulative_returns)
+            portfolio_cumulative_chart = px.line(
+                cumulative_returns,
+                labels={
+                    "index": "Date",
+                    "value": "Cumulative Return"
+                },
+                title="Portfolio Cumulative Returns"
+            )
+
+            portfolio_cumulative_chart.update_layout(
+                dragmode="pan",
+                yaxis_tickformat=".1%",
+                showlegend=False
+            )
+
+            st.plotly_chart(
+                portfolio_cumulative_chart,
+                use_container_width=True,
+                config=PLOTLY_CONFIG
+            )
 
             st.subheader("Portfolio Daily Returns")
 
-            st.line_chart(results["portfolio_returns"])
+            portfolio_daily_chart = px.line(
+                results["portfolio_returns"],
+                labels={
+                    "index": "Date",
+                    "value": "Daily Return"
+                },
+                title="Portfolio Daily Returns"
+            )
+
+            portfolio_daily_chart.update_layout(
+                dragmode="pan",
+                yaxis_tickformat=".2%",
+                showlegend=False
+            )
+
+            st.plotly_chart(
+                portfolio_daily_chart,
+                use_container_width=True,
+                config=PLOTLY_CONFIG
+            )
 
             correlation_matrix = results["correlation_matrix"]
 
@@ -375,14 +560,15 @@ elif page == "Portfolio Analysis":
 
             fig.update_layout(
                 xaxis_title="Asset",
-                yaxis_title="Asset"
+                yaxis_title="Asset",
+                dragmode="pan"
             )
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
-
 
             st.subheader("Individual Asset Performance")
 
@@ -402,9 +588,15 @@ elif page == "Portfolio Analysis":
                 title="Cumulative Returns by Asset"
             )
 
+            fig.update_layout(
+                dragmode="pan",
+                yaxis_tickformat=".1%"
+            )
+
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
         except Exception as error:
@@ -551,9 +743,16 @@ elif page == "Benchmark Comparison":
                 title="Portfolio vs Benchmark Returns"
             )
 
+            fig.update_layout(
+                dragmode="pan",
+                yaxis_tickformat=".1%",
+                
+            )
+
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
             st.subheader("Excess Returns")
@@ -568,12 +767,16 @@ elif page == "Benchmark Comparison":
             )
 
             fig.update_layout(
-                yaxis_title="Excess Return"
+                yaxis_title="Excess Return",
+                yaxis_tickformat=".2%",
+                dragmode="pan",
+                showlegend=False
             )
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
             st.subheader("Daily Return Comparison")
@@ -589,16 +792,20 @@ elif page == "Benchmark Comparison":
             )
 
             fig.update_layout(
-                yaxis_title="Daily Return"
+                yaxis_title="Daily Return",
+                yaxis_tickformat=".2%",
+                dragmode="pan"
             )
 
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
         except ValueError as error:
             st.error(f"Invalid input: {error}")
+
 
 elif page == "Economic Data":
 
@@ -671,7 +878,7 @@ elif page == "Economic Data":
             st.success(
                 f"Successfully retrieved {series_id.upper()} data."
             )
-                        
+
             st.subheader("Historical Economic Data")
 
             fig = px.line(
@@ -685,9 +892,14 @@ elif page == "Economic Data":
                 title=f"{series_id.upper()} Historical Data"
             )
 
+            fig.update_layout(
+                dragmode="pan"
+            )
+
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
         except Exception as error:
@@ -740,7 +952,7 @@ elif page == "Economic Data":
                 axis=1
             )
 
-            normalized_data = pd.DataFrame(
+            percentage_change_data = pd.DataFrame(
                 index=comparison_data.index
             )
 
@@ -750,34 +962,40 @@ elif page == "Economic Data":
 
                 if series.empty or series.iloc[0] == 0:
                     raise ValueError(
-                        f"Cannot normalize {indicator}."
+                        f"Cannot calculate percentage change for {indicator}."
                     )
 
-                normalized_data[indicator] = (
-                    comparison_data[indicator] / series.iloc[0]
+                percentage_change_data[indicator] = (
+                    (comparison_data[indicator] / series.iloc[0]) - 1
                 ) * 100
 
             st.success("Successfully retrieved all indicators.")
 
-            st.subheader("Indexed Economic Indicator Comparison")
+            st.subheader("Economic Indicator Percentage Changes")
 
             fig = px.line(
-                
-                normalized_data,
+                percentage_change_data,
                 labels={
-                    "value": "Index (First Observation = 100)",
+                    "value": "Percentage Change",
                     "index": "Date",
                     "variable": "Economic Indicator"
                 },
-                title="Relative Economic Indicator Changes"
+                title="Percentage Change in Economic Indicators"
             )
+
             fig.update_traces(
                 connectgaps=True
             )
 
+            fig.update_layout(
+                yaxis_ticksuffix="%",
+                dragmode="pan"
+            )
+
             st.plotly_chart(
                 fig,
-                use_container_width=True
+                use_container_width=True,
+                config=PLOTLY_CONFIG
             )
 
         except Exception as error:
