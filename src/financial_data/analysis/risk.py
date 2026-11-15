@@ -39,3 +39,18 @@ def calculate_sharpe_ratio(
     return (
         excess_returns.mean() / volatility
     ) * (periods_per_year ** 0.5)
+
+
+def calculate_rolling_volatility(
+        returns: pd.Series,
+        window: int = 30,
+        periods_per_year: int = 252
+    ) -> pd.Series:
+    """Calculate annualized rolling volatility from periodic returns."""
+
+    rolling_volatility = (
+        returns.rolling(window).std()
+        * (periods_per_year ** 0.5)
+    )
+
+    return rolling_volatility.dropna()

@@ -5,7 +5,8 @@ import pytest
 from financial_data.analysis.risk import (
     calculate_volatility,
     calculate_max_drawdown,
-    calculate_sharpe_ratio
+    calculate_sharpe_ratio,
+    calculate_rolling_volatility
 )
 
 
@@ -44,3 +45,28 @@ def test_sharpe_ratio_zero_volatility():
 
     with pytest.raises(ValueError):
         calculate_sharpe_ratio(returns)
+
+
+def test_calculate_rolling_volatility():
+    returns = pd.Series(
+        [0.01, 0.02, 0.015, 0.03, 0.025]
+    )
+
+    rolling_volatility = calculate_rolling_volatility(
+        returns,
+        window=3
+    )
+
+    expected_first_value = (
+        returns.iloc[:3].std() * (252 ** 0.5)
+    )
+
+    assert len(rolling_volatility) == 3
+
+    assert rolling_volatility.iloc[0] == pytest.approx(
+        expected_first_value
+    )
+
+    assert rolling_volatility.index.equals(
+        returns.index[2:]
+    )

@@ -15,7 +15,6 @@ from financial_data.database.operations import (
 
 from financial_data.database.operations import (
     load_stock_data,
-    load_economic_data
 )
 
 from financial_data.analysis.returns import (
@@ -26,7 +25,8 @@ from financial_data.analysis.returns import (
 from financial_data.analysis.risk import (
     calculate_volatility,
     calculate_max_drawdown,
-    calculate_sharpe_ratio
+    calculate_sharpe_ratio,
+    calculate_rolling_volatility
 )
 
 from financial_data.analysis.portfolio import (
@@ -80,6 +80,11 @@ def analyze_stock(
         stock_data["Close"]
     )
 
+    rolling_volatility = calculate_rolling_volatility(
+        daily_returns,
+        window=30
+    )   
+
     cumulative_returns = calculate_cumulative_returns(
         daily_returns
     )
@@ -96,7 +101,8 @@ def analyze_stock(
         "cumulative_returns": cumulative_returns,
         "volatility": volatility,
         "max_drawdown": max_drawdown,
-        "sharpe_ratio": sharpe_ratio
+        "sharpe_ratio": sharpe_ratio,
+        "rolling_volatility": rolling_volatility,
     }
 
 
@@ -152,6 +158,17 @@ def analyze_portfolio(
         returns_df
     )
 
+    asset_metrics = {}
+
+    for ticker in returns_df.columns:
+        asset_returns = returns_df[ticker]
+
+        asset_metrics[ticker] = {
+            "volatility": calculate_volatility(asset_returns),
+            "max_drawdown": calculate_max_drawdown(asset_returns),
+            "sharpe_ratio": calculate_sharpe_ratio(asset_returns)
+        }
+
     return {
         "weights": weights,
         "asset_returns": returns_df,
@@ -159,7 +176,8 @@ def analyze_portfolio(
         "volatility": volatility,
         "max_drawdown": max_drawdown,
         "sharpe_ratio": sharpe_ratio,
-        "correlation_matrix": correlation_matrix
+        "correlation_matrix": correlation_matrix,
+        "asset_metrics": asset_metrics,
     }
 
 
